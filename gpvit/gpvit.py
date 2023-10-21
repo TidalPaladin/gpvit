@@ -24,6 +24,9 @@ class GPViT(nn.Module):
         activation: The activation function to use.
         nhead: The number of heads in the multihead attention models. Defaults to
             ``dim // 64`` for Flash Attention.
+
+    Returns:
+        Tuple[Tensor, Tensor]: The output of the model and the output of the group tokens.
     """
 
     def __init__(
