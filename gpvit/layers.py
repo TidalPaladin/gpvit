@@ -1,5 +1,5 @@
 from copy import copy
-from typing import Tuple
+from typing import Optional, Tuple
 
 from einops.layers.torch import Rearrange
 from torch import Tensor, nn
@@ -42,10 +42,11 @@ class MLPMixer(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(channel_dim, dim),
         )
+        self.norm = nn.LayerNorm(dim)
 
     def forward(self, x: Tensor) -> Tensor:
         x = self.token_mixing(x)
-        x = self.channel_mixing(x)
+        x = self.norm(x + self.channel_mixing(x))
         return x
 
 
@@ -102,6 +103,10 @@ class GroupPropagation(nn.Module):
         channel_dim: The dimension of the channels.
         dropout: The dropout value.
         activation: The activation function to use.
+        kernel_size: The kernel size for the DW convolutional layer. Defaults to None,
+            meaning no convolutional layer is used.
+        tokenized_size: The size of the tokenized image. Only required when using a
+            convolutional layer.
 
     Returns:
         Tuple[Tensor, Tensor]: The tokens and group tokens after propagation.
@@ -116,6 +121,8 @@ class GroupPropagation(nn.Module):
         channel_dim: int,
         dropout: float = 0.0,
         activation: nn.Module = nn.GELU(),
+        kernel_size: Optional[Tuple[int, int]] = None,
+        tokenized_size: Optional[Tuple[int, int]] = None,
     ):
         super().__init__()
         self.attn1 = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
@@ -127,11 +134,28 @@ class GroupPropagation(nn.Module):
         self.q2 = nn.Linear(d_model, d_model)
         self.kv2 = nn.Linear(d_model, 2 * d_model)
 
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+
+        if kernel_size is not None:
+            if tokenized_size is None:
+                raise ValueError("tokenized_size must be provided when using a convolutional layer")
+            padding = tuple((k - 1) // 2 for k in kernel_size)
+            H, W = tokenized_size
+            self.conv = nn.Sequential(
+                Rearrange("b (h w) d -> b d h w", h=H, w=W, d=d_model),
+                nn.Conv2d(d_model, d_model, kernel_size, groups=d_model, padding=padding),
+                Rearrange("b d h w -> b (h w) d", h=H, w=W, d=d_model),
+            )
+        else:
+            self.conv = None
+
     def forward(self, tokens: Tensor, group_tokens: Tensor) -> Tuple[Tensor, Tensor]:
         # Cross attention - group tokens to tokens
         q = self.q1(group_tokens)
         k, v = self.kv1(tokens).chunk(2, dim=-1)
-        group_tokens, _ = self.attn1(q, k, v)
+        _group_tokens, _ = self.attn1(q, k, v)
+        group_tokens = self.norm1(group_tokens + _group_tokens)
 
         # Group token mixing
         group_tokens = self.mixer(group_tokens)
@@ -139,6 +163,11 @@ class GroupPropagation(nn.Module):
         # Cross attention - tokens to group tokens
         q = self.q2(tokens)
         k, v = self.kv2(group_tokens).chunk(2, dim=-1)
-        tokens, _ = self.attn2(q, k, v)
+        _tokens, _ = self.attn2(q, k, v)
+        tokens = self.norm2(tokens + _tokens)
+
+        # Maybe DW conv
+        if self.conv is not None:
+            tokens = tokens + self.conv(tokens)
 
         return tokens, group_tokens
