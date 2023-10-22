@@ -30,6 +30,15 @@ class GPViT(nn.Module):
         conv: Whether to use a DW conv in each GP block. The kernel size is set to
             ``window_size``. Defaults to True.
         pos_enc: Position encoding to use. Can be one of ``"fourier"``, ``"learned"``.
+        reshape_output: Whether to reshape the output to a grid. Defaults to True.
+
+    Shapes:
+        * Input - :math:`(B, C, H, W)`
+        * Output - :math:`(B, D, H', W')`, where :math:`H' = H // patch_size[0]` and
+            :math:`W' = W // patch_size[1]`, and :math:`D` is the dimension of the input data.
+            If ``reshape_output`` is False, then the output shape is :math:`(B, H'*W', D)`.
+        * Group tokens - :math:`(B, L, D)` where :math:`L` is the number of group tokens
+            and :math:`D` is the dimension of the input data.
 
     Returns:
         Tuple[Tensor, Tensor]: The output of the model and the output of the group tokens.
@@ -50,6 +59,7 @@ class GPViT(nn.Module):
         nhead: Optional[int] = None,
         conv: bool = True,
         pos_enc: str = "fourier",
+        reshape_output: bool = True,
     ):
         super().__init__()
         self._dim = dim
@@ -59,6 +69,7 @@ class GPViT(nn.Module):
         self._window_size = window_size
         self._in_channels = in_channels
         self._conv = conv
+        self._reshape_output = reshape_output
 
         # Initialize group tokens
         self.group_tokens = nn.Parameter(torch.randn(1, num_group_tokens, dim))
@@ -71,6 +82,7 @@ class GPViT(nn.Module):
             Rearrange("b c h w -> b (h w) c"),
             nn.LayerNorm(dim),
         )
+        self.stem_norm = nn.LayerNorm(dim)
 
         # Position encoding
         if pos_enc == "fourier":
@@ -120,8 +132,8 @@ class GPViT(nn.Module):
         if isinstance(self.position, nn.Parameter):
             pos = self.position
         else:
-            pos = self.position.from_grid(self.tokenized_size, proto=x, batch_size=B)
-        x = x + pos
+            pos = self.position.from_grid(list(self.tokenized_size), proto=x, batch_size=B)
+        x = self.stem_norm(x + pos)
 
         # Body
         group_tokens = self.group_tokens.expand(B, -1, -1)
@@ -132,7 +144,8 @@ class GPViT(nn.Module):
                 x = block(x)
 
         # Unpatch and return
-        x = self.tokens_to_grid(x)
+        if self.reshape_output:
+            x = self.tokens_to_grid(x)
         return x, group_tokens
 
     @property
@@ -171,9 +184,20 @@ class GPViT(nn.Module):
 
     @property
     def kernel_size(self) -> Optional[Tuple[int, int]]:
+        # Ensure kernel size is odd
         if self.conv:
-            # Ensure kernel size is odd
-            return tuple(k if k % 2 != 0 else k + 1 for k in self.window_size)
+            # Not scriptable
+            # return tuple(k if k % 2 != 0 else k + 1 for k in self.window_size)
+            H, W = self.window_size
+            return (
+                H if H % 2 != 0 else H + 1,
+                W if W % 2 != 0 else W + 1,
+            )
+        return None
+
+    @property
+    def reshape_output(self) -> bool:
+        return self._reshape_output
 
     def register_mask_hook(self, func: Callable, *args, **kwargs) -> RemovableHandle:
         r"""Register a token masking hook to be applied after the patch embedding step.

@@ -50,7 +50,7 @@ class MLPMixer(nn.Module):
         return x
 
 
-class WindowAttention(nn.TransformerEncoderLayer):
+class WindowAttention(nn.Module):
     """
     Window Attention class for applying window-based attention to an input tensor.
 
@@ -69,8 +69,12 @@ class WindowAttention(nn.TransformerEncoderLayer):
         window_size: Tuple[int, int],
         **kwargs,
     ):
+        # TODO: It is cleaner to inherit from TransformerEncoderLayer but calling super().forward()
+        # is not supported in torchscript. See https://github.com/pytorch/pytorch/issues/42885
+        super().__init__()
         kwargs.setdefault("batch_first", "True")
-        super().__init__(*args, **kwargs)
+        self.transformer_layer = nn.TransformerEncoderLayer(*args, **kwargs)
+
         Hw, Ww = window_size
         Hi, Wi = grid_size
 
@@ -86,7 +90,7 @@ class WindowAttention(nn.TransformerEncoderLayer):
 
     def forward(self, x: Tensor) -> Tensor:
         x = self.window(x)
-        x = super().forward(x)
+        x = self.transformer_layer(x)
         x = self.unwindow(x)
         return x
 

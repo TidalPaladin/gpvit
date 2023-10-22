@@ -28,6 +28,13 @@ class TestMLPMixer:
         output.sum().backward()
         assert x.grad is not None
 
+    def test_torch_scriptable(self):
+        mixer = MLPMixer(64, 32, 16, 32)
+        x = torch.randn(1, 16, 64)
+        scripted_mixer = torch.jit.script(mixer)
+        output = scripted_mixer(x)  # type: ignore
+        assert output.shape == x.shape
+
 
 class TestWindowAttention:
     @pytest.mark.parametrize("device", ["cpu", "cuda"])
@@ -52,6 +59,13 @@ class TestWindowAttention:
         output = attn(x)
         output.sum().backward()
         assert x.grad is not None
+
+    def test_torch_scriptable(self):
+        attn = WindowAttention(64, 4, grid_size=(16, 16), window_size=(4, 4))
+        x = torch.randn(1, 256, 64)
+        scripted_attn = torch.jit.script(attn)
+        output = scripted_attn(x)  # type: ignore
+        assert output.shape == x.shape
 
 
 class TestGroupPropagation:
@@ -83,3 +97,12 @@ class TestGroupPropagation:
         (output_tokens.sum() + output_group_tokens.sum()).backward()
         assert tokens.grad is not None
         assert group_tokens.grad is not None
+
+    def test_torch_scriptable(self):
+        gp = GroupPropagation(64, 4, 16, 32, 32)
+        tokens = torch.randn(1, 16, 64)
+        group_tokens = torch.randn(1, 16, 64)
+        scripted_gp = torch.jit.script(gp)
+        output_tokens, output_group_tokens = scripted_gp(tokens, group_tokens)  # type: ignore
+        assert output_tokens.shape == tokens.shape
+        assert output_group_tokens.shape == group_tokens.shape
