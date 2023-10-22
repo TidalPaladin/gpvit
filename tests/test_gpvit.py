@@ -1,5 +1,6 @@
 import pytest
 import torch
+import torch.nn as nn
 
 from gpvit import GPViT
 
@@ -39,3 +40,30 @@ def test_backprop():
     loss.backward()
 
     assert x.grad is not None
+
+
+def test_register_mask_hook():
+    model = GPViT(dim=128, num_group_tokens=16, depth=12, img_size=(64, 64), patch_size=(8, 8), window_size=(4, 4))
+    x = torch.randn(1, 3, 64, 64, requires_grad=True)
+    output1, group_output1 = model(x)
+
+    def hook(module, input, output):
+        return output * 0.0
+
+    handle = model.register_mask_hook(hook)
+    output2, group_output2 = model(x)
+
+    assert (output1 != output2).any()
+    handle.remove()
+
+
+def test_unpatch():
+    model = GPViT(dim=128, num_group_tokens=16, depth=12, img_size=(64, 64), patch_size=(8, 8), window_size=(4, 4))
+    x = torch.randn(1, 3, 64, 64, requires_grad=True)
+    output, _ = model(x)
+
+    head = nn.Linear(128, 3 * 8 * 8)
+    output = head(output.movedim(1, -1)).movedim(-1, 1)
+
+    unpatched = model.unpatch(output)
+    assert unpatched.shape == (1, 3, 64, 64)

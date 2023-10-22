@@ -1,8 +1,10 @@
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 import torch
+from einops import rearrange
 from einops.layers.torch import Rearrange
 from torch import Tensor, nn
+from torch.utils.hooks import RemovableHandle
 
 from .layers import GroupPropagation, WindowAttention
 
@@ -129,3 +131,42 @@ class GPViT(nn.Module):
         H = self.img_size[0] // self.patch_size[0]
         W = self.img_size[1] // self.patch_size[1]
         return H, W
+
+    def register_mask_hook(self, func: Callable, *args, **kwargs) -> RemovableHandle:
+        r"""Register a token masking hook to be applied after the patch embedding step.
+
+        Args:
+            func: Callable token making hook with signature given in :func:`register_forward_hook`
+
+        Returns:
+            A handle that can be used to remove the added hook by calling ``handle.remove()``.
+        """
+        return self.patch_embed.register_forward_hook(func, *args, **kwargs)
+
+    def unpatch(self, x: Tensor) -> Tensor:
+        """
+        Unpatches the input tensor into the original image. It is assumed that the
+        second dimension is of size ``H_p W_p C`` where ``H_p`` and ``W_p`` are the
+        patch size and ``C`` is the number of channels. This function is used to invert
+        the patch embedding step for tasks like MAE.
+
+        Args:
+            x: The input tensor to be unpatched.
+
+        Shapes:
+            * ``x`` - :math:`(B, H_p W_p C, H, W)`
+            - output: :math:`(B, C, H H_p, W W_p)`
+
+        Returns:
+            Tensor: The unpatched tensor.
+        """
+        Hp, Wp = self.patch_size
+        H, W = self.tokenized_size
+        return rearrange(
+            x,
+            "b (hp wp c) h w -> b c (h hp) (w wp)",
+            hp=Hp,
+            wp=Wp,
+            h=H,
+            w=W,
+        )
