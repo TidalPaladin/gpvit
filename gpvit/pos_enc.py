@@ -13,20 +13,6 @@ class PositionEncoder(nn.Module):
     def __init__(self):
         super().__init__()
 
-    def relative_forward(self, x: Tensor, neighbors: Tensor) -> Tensor:
-        r"""Computes the positional encoding using relative distances between coordinates in
-        ``x`` and coordinates in ``neighbors``.
-        Shapes:
-            * ``x`` - :math:`(L, N, C)`
-            * ``neighbors`` - :math:`(K, L, N, C)` where :math:`K` is the neighborhood of relative coordinates
-              for a given coordinate in ``x``.
-            * Output - :math:`(K, L, N, C)`
-        """
-        L, N, C = x.shape
-        K, L, N, C = neighbors.shape
-        delta = neighbors - x.view(1, L, N, C)
-        return self(delta.view(-1, N, C)).view(K, L, N, C)
-
     @torch.jit.export  # type: ignore
     def from_grid(
         self,

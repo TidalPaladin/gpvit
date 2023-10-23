@@ -45,9 +45,9 @@ class MLPMixer(nn.Module):
         self.norm = nn.LayerNorm(dim)
 
     def forward(self, x: Tensor) -> Tensor:
-        x = self.token_mixing(x)
-        x = self.norm(x + self.channel_mixing(x))
-        return x
+        y = self.token_mixing(x)
+        y = self.channel_mixing(y)
+        return self.norm(x + y)
 
 
 class WindowAttention(nn.Module):
@@ -79,9 +79,9 @@ class WindowAttention(nn.Module):
         Hi, Wi = grid_size
 
         if not Hi % Hw == 0:
-            raise ValueError(f"Window height {Hw} does not divide grid height {Hi}")
+            raise ValueError(f"Window height {Hw} does not divide grid height {Hi}")  # pragma: no cover
         if not Wi % Ww == 0:
-            raise ValueError(f"Window width {Ww} does not divide grid width {Wi}")
+            raise ValueError(f"Window width {Ww} does not divide grid width {Wi}")  # pragma: no cover
 
         H, W = Hi // Hw, Wi // Ww
         self.grid_size = grid_size
@@ -143,7 +143,7 @@ class GroupPropagation(nn.Module):
 
         if kernel_size is not None:
             if tokenized_size is None:
-                raise ValueError("tokenized_size must be provided when using a convolutional layer")
+                raise ValueError("tokenized_size must be provided when using a convolutional layer")  # pragma: no cover
             padding = tuple((k - 1) // 2 for k in kernel_size)
             H, W = tokenized_size
             self.conv = nn.Sequential(
@@ -151,8 +151,10 @@ class GroupPropagation(nn.Module):
                 nn.Conv2d(d_model, d_model, kernel_size, groups=d_model, padding=padding),
                 Rearrange("b d h w -> b (h w) d", h=H, w=W, d=d_model),
             )
+            self.norm3 = nn.LayerNorm(d_model)
         else:
             self.conv = None
+            self.norm3 = None
 
     def forward(self, tokens: Tensor, group_tokens: Tensor) -> Tuple[Tensor, Tensor]:
         # Cross attention - group tokens to tokens
@@ -171,7 +173,7 @@ class GroupPropagation(nn.Module):
         tokens = self.norm2(tokens + _tokens)
 
         # Maybe DW conv
-        if self.conv is not None:
-            tokens = tokens + self.conv(tokens)
+        if self.conv is not None and self.norm3 is not None:
+            tokens = self.norm3(tokens + self.conv(tokens))
 
         return tokens, group_tokens
