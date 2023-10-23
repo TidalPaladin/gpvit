@@ -67,3 +67,18 @@ def test_unpatch():
 
     unpatched = model.unpatch(output)
     assert unpatched.shape == (1, 3, 64, 64)
+
+
+def test_torch_script():
+    model = GPViT(dim=128, num_group_tokens=16, depth=12, img_size=(64, 64), patch_size=(8, 8), window_size=(4, 4))
+    x = torch.randn(1, 3, 64, 64, requires_grad=True)
+
+    # Convert the model to TorchScript
+    script_model = torch.jit.script(model)
+
+    # Verify the script model works as expected
+    output_script, group_output_script = script_model(x)  # type: ignore
+    output, group_output = model(x)
+
+    assert torch.allclose(output, output_script)
+    assert torch.allclose(group_output, group_output_script)
