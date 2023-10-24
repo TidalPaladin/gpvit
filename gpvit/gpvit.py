@@ -58,7 +58,7 @@ class GPViT(nn.Module):
         activation: nn.Module = nn.GELU(),
         nhead: Optional[int] = None,
         conv: bool = True,
-        pos_enc: str = "fourier",
+        pos_enc: str = "learned",
         reshape_output: bool = True,
     ):
         super().__init__()
@@ -104,7 +104,7 @@ class GPViT(nn.Module):
                     token_hidden_dim,
                     channel_hidden_dim,
                     dropout,
-                    activation,
+                    activation=activation,
                     kernel_size=self.kernel_size,
                     tokenized_size=self.tokenized_size,
                 )

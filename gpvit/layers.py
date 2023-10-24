@@ -106,6 +106,7 @@ class GroupPropagation(nn.Module):
         token_dim: The dimension of the tokens.
         channel_dim: The dimension of the channels.
         dropout: The dropout value.
+        mlp_hidden_dim: Hidden dimension of the MLPs. Defaults to ``4 * d_model``.
         activation: The activation function to use.
         kernel_size: The kernel size for the DW convolutional layer. Defaults to None,
             meaning no convolutional layer is used.
@@ -124,23 +125,28 @@ class GroupPropagation(nn.Module):
         token_dim: int,
         channel_dim: int,
         dropout: float = 0.0,
+        mlp_hidden_dim: Optional[int] = None,
         activation: nn.Module = nn.GELU(),
         kernel_size: Optional[Tuple[int, int]] = None,
         tokenized_size: Optional[Tuple[int, int]] = None,
     ):
         super().__init__()
+        # Cross attention 1
         self.attn1 = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
         self.q1 = nn.Linear(d_model, d_model)
         self.kv1 = nn.Linear(d_model, 2 * d_model)
+        self.norm1 = nn.LayerNorm(d_model)
 
+        # MLPMixer for group tokens
         self.mixer = MLPMixer(d_model, token_dim, num_tokens, channel_dim, dropout=dropout, activation=activation)
+
+        # Cross attention 2
         self.attn2 = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
         self.q2 = nn.Linear(d_model, d_model)
         self.kv2 = nn.Linear(d_model, 2 * d_model)
-
-        self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
 
+        # Possible DW conv for tokens
         if kernel_size is not None:
             if tokenized_size is None:
                 raise ValueError("tokenized_size must be provided when using a convolutional layer")  # pragma: no cover
@@ -151,10 +157,18 @@ class GroupPropagation(nn.Module):
                 nn.Conv2d(d_model, d_model, kernel_size, groups=d_model, padding=padding),
                 Rearrange("b d h w -> b (h w) d", h=H, w=W, d=d_model),
             )
-            self.norm3 = nn.LayerNorm(d_model)
         else:
             self.conv = None
-            self.norm3 = None
+
+        # MLP for tokens
+        mlp_hidden_dim = d_model * 4 if mlp_hidden_dim is None else mlp_hidden_dim
+        self.mlp = nn.Sequential(
+            nn.Linear(d_model, mlp_hidden_dim),
+            copy(activation),
+            nn.Dropout(dropout),
+            nn.Linear(mlp_hidden_dim, d_model),
+        )
+        self.norm3 = nn.LayerNorm(d_model)
 
     def forward(self, tokens: Tensor, group_tokens: Tensor) -> Tuple[Tensor, Tensor]:
         # Cross attention - group tokens to tokens
@@ -173,7 +187,11 @@ class GroupPropagation(nn.Module):
         tokens = self.norm2(tokens + _tokens)
 
         # Maybe DW conv
+        _tokens = tokens
         if self.conv is not None and self.norm3 is not None:
-            tokens = self.norm3(tokens + self.conv(tokens))
+            _tokens = self.conv(_tokens)
+
+        # MLP
+        tokens = self.norm3(tokens + self.mlp(_tokens))
 
         return tokens, group_tokens
