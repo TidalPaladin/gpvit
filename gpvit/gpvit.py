@@ -58,7 +58,7 @@ class GPViT(nn.Module):
         activation: nn.Module = nn.GELU(),
         nhead: Optional[int] = None,
         conv: bool = True,
-        pos_enc: str = "fourier",
+        pos_enc: str = "learned",
         reshape_output: bool = True,
     ):
         super().__init__()
