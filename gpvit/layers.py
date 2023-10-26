@@ -42,12 +42,13 @@ class MLPMixer(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(channel_dim, dim),
         )
-        self.norm = nn.LayerNorm(dim)
+        self.norm1 = nn.LayerNorm(dim)
+        self.norm2 = nn.LayerNorm(dim)
 
     def forward(self, x: Tensor) -> Tensor:
-        y = self.token_mixing(x)
-        y = self.channel_mixing(y)
-        return self.norm(x + y)
+        x = self.norm1(x + self.token_mixing(x))
+        x = self.norm2(x + self.channel_mixing(x))
+        return x
 
 
 class WindowAttention(nn.Module):
