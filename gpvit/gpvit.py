@@ -6,7 +6,7 @@ from einops.layers.torch import Rearrange
 from torch import Tensor, nn
 from torch.utils.hooks import RemovableHandle
 
-from .layers import GroupPropagation, WindowAttention
+from .layers import GroupPropagationMLPMixer, GroupPropagationTransformer, WindowAttention
 from .pos_enc import FourierLogspace
 
 
@@ -31,6 +31,10 @@ class GPViT(nn.Module):
             ``window_size``. Defaults to True.
         pos_enc: Position encoding to use. Can be one of ``"fourier"``, ``"learned"``.
         reshape_output: Whether to reshape the output to a grid. Defaults to True.
+        group_token_mixer: Choice of mixer for the group tokens. Can be one of
+            "mlpmixer", "transformer". Defaults to "mlpmixer".
+        mixer_repeats: The number of times to repeat the mixer. Only used if
+            ``group_token_mixer`` is "transformer". Defaults to 1.
 
     Shapes:
         * Input - :math:`(B, C, H, W)`
@@ -60,6 +64,8 @@ class GPViT(nn.Module):
         conv: bool = True,
         pos_enc: str = "learned",
         reshape_output: bool = True,
+        group_token_mixer: str = "mlpmixer",
+        mixer_repeats: int = 1,
     ):
         super().__init__()
         self._dim = dim
@@ -97,17 +103,29 @@ class GPViT(nn.Module):
             if is_group_propagation:
                 token_hidden_dim = num_group_tokens * 4
                 channel_hidden_dim = dim * 4
-                block = GroupPropagation(
-                    dim,
-                    self.nhead,
-                    num_group_tokens,
-                    token_hidden_dim,
-                    channel_hidden_dim,
-                    dropout,
-                    activation=activation,
-                    kernel_size=self.kernel_size,
-                    tokenized_size=self.tokenized_size,
-                )
+                if group_token_mixer == "mlpmixer":
+                    block = GroupPropagationMLPMixer(
+                        dim,
+                        self.nhead,
+                        num_group_tokens,
+                        token_hidden_dim,
+                        channel_hidden_dim,
+                        dropout,
+                        activation=activation,
+                        kernel_size=self.kernel_size,
+                        tokenized_size=self.tokenized_size,
+                    )
+                else:
+                    block = GroupPropagationTransformer(
+                        dim,
+                        self.nhead,
+                        mixer_repeats,
+                        dropout,
+                        activation=activation,
+                        kernel_size=self.kernel_size,
+                        tokenized_size=self.tokenized_size,
+                    )
+
             else:
                 # Ensure we use an activation form that will be accelerated by TransformerEncoderLayer
                 act = "gelu" if activation == nn.GELU() else "relu" if activation == nn.ReLU() else activation
@@ -138,10 +156,10 @@ class GPViT(nn.Module):
         # Body
         group_tokens = self.group_tokens.expand(B, -1, -1)
         for block in self.blocks:
-            if isinstance(block, GroupPropagation):
-                x, group_tokens = block(x, group_tokens)
-            else:
+            if isinstance(block, WindowAttention):
                 x = block(x)
+            else:
+                x, group_tokens = block(x, group_tokens)
 
         # Unpatch and return
         if self.reshape_output:

@@ -1,6 +1,8 @@
+from abc import ABC
 from copy import copy
 from typing import Optional, Tuple
 
+import torch
 from einops.layers.torch import Rearrange
 from torch import Tensor, nn
 
@@ -96,16 +98,14 @@ class WindowAttention(nn.Module):
         return x
 
 
-class GroupPropagation(nn.Module):
+class GroupPropagation(nn.Module, ABC):
     """
     Group Propagation class for applying group propagation to an input tensor.
+    Subclass to implement group token mixing.
 
     Args:
         d_model: The dimension of the model.
         nhead: The number of heads in the multihead attention models.
-        num_tokens: The number of tokens.
-        token_dim: The dimension of the tokens.
-        channel_dim: The dimension of the channels.
         dropout: The dropout value.
         mlp_hidden_dim: Hidden dimension of the MLPs. Defaults to ``4 * d_model``.
         activation: The activation function to use.
@@ -113,6 +113,10 @@ class GroupPropagation(nn.Module):
             meaning no convolutional layer is used.
         tokenized_size: The size of the tokenized image. Only required when using a
             convolutional layer.
+        group_tokens_as_kv: Whether to use the group tokens as the key and value in the
+            first cross attention layer. Setting this to ``True`` allows the group tokens
+            to attend to both the tokens and the group tokens. Otherwise the group tokens
+            attend only to the tokens. Defaults to False.
 
     Returns:
         Tuple[Tensor, Tensor]: The tokens and group tokens after propagation.
@@ -122,24 +126,22 @@ class GroupPropagation(nn.Module):
         self,
         d_model: int,
         nhead: int,
-        num_tokens: int,
-        token_dim: int,
-        channel_dim: int,
         dropout: float = 0.0,
         mlp_hidden_dim: Optional[int] = None,
         activation: nn.Module = nn.GELU(),
         kernel_size: Optional[Tuple[int, int]] = None,
         tokenized_size: Optional[Tuple[int, int]] = None,
+        group_tokens_as_kv: bool = False,
     ):
         super().__init__()
+        self.mixer = nn.Identity()
+        self.group_tokens_as_kv = group_tokens_as_kv
+
         # Cross attention 1
         self.attn1 = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
         self.q1 = nn.Linear(d_model, d_model)
         self.kv1 = nn.Linear(d_model, 2 * d_model)
         self.norm1 = nn.LayerNorm(d_model)
-
-        # MLPMixer for group tokens
-        self.mixer = MLPMixer(d_model, token_dim, num_tokens, channel_dim, dropout=dropout, activation=activation)
 
         # Cross attention 2
         self.attn2 = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
@@ -174,7 +176,8 @@ class GroupPropagation(nn.Module):
     def forward(self, tokens: Tensor, group_tokens: Tensor) -> Tuple[Tensor, Tensor]:
         # Cross attention - group tokens to tokens
         q = self.q1(group_tokens)
-        k, v = self.kv1(tokens).chunk(2, dim=-1)
+        _tokens = torch.cat([tokens, group_tokens], dim=1) if self.group_tokens_as_kv else tokens
+        k, v = self.kv1(_tokens).chunk(2, dim=-1)
         _group_tokens, _ = self.attn1(q, k, v)
         group_tokens = self.norm1(group_tokens + _group_tokens)
 
@@ -196,3 +199,114 @@ class GroupPropagation(nn.Module):
         tokens = self.norm3(tokens + self.mlp(_tokens))
 
         return tokens, group_tokens
+
+
+class GroupPropagationMLPMixer(GroupPropagation):
+    """
+    Group Propagation class for applying group propagation to an input tensor.
+    Uses MLPMixer for group token mixing.
+
+    Args:
+        d_model: The dimension of the model.
+        nhead: The number of heads in the multihead attention models.
+        num_tokens: The number of tokens.
+        token_dim: The dimension of the tokens.
+        channel_dim: The dimension of the channels.
+        dropout: The dropout value.
+        mlp_hidden_dim: Hidden dimension of the MLPs. Defaults to ``4 * d_model``.
+        activation: The activation function to use.
+        kernel_size: The kernel size for the DW convolutional layer. Defaults to None,
+            meaning no convolutional layer is used.
+        tokenized_size: The size of the tokenized image. Only required when using a
+            convolutional layer.
+
+    Returns:
+        Tuple[Tensor, Tensor]: The tokens and group tokens after propagation.
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        nhead: int,
+        num_tokens: int,
+        token_dim: int,
+        channel_dim: int,
+        dropout: float = 0.0,
+        mlp_hidden_dim: Optional[int] = None,
+        activation: nn.Module = nn.GELU(),
+        kernel_size: Optional[Tuple[int, int]] = None,
+        tokenized_size: Optional[Tuple[int, int]] = None,
+    ):
+        super().__init__(
+            d_model,
+            nhead,
+            dropout,
+            mlp_hidden_dim,
+            activation,
+            kernel_size,
+            tokenized_size,
+        )
+
+        # MLPMixer for group tokens
+        self.mixer = MLPMixer(d_model, token_dim, num_tokens, channel_dim, dropout=dropout, activation=activation)
+
+
+class GroupPropagationTransformer(GroupPropagation):
+    """
+    Group Propagation class for applying group propagation to an input tensor.
+    Uses a transformer for group token mixing.
+
+    Args:
+        d_model: The dimension of the model.
+        nhead: The number of heads in the multihead attention models.
+        num_transformer_layers: The number of transformer layers to use in group token mixing.
+        dropout: The dropout value.
+        mlp_hidden_dim: Hidden dimension of the MLPs. Defaults to ``4 * d_model``.
+        activation: The activation function to use.
+        kernel_size: The kernel size for the DW convolutional layer. Defaults to None,
+            meaning no convolutional layer is used.
+        tokenized_size: The size of the tokenized image. Only required when using a
+            convolutional layer.
+
+    Returns:
+        Tuple[Tensor, Tensor]: The tokens and group tokens after propagation.
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        nhead: int,
+        num_transformer_layers: int = 1,
+        dropout: float = 0.0,
+        mlp_hidden_dim: Optional[int] = None,
+        activation: nn.Module = nn.GELU(),
+        kernel_size: Optional[Tuple[int, int]] = None,
+        tokenized_size: Optional[Tuple[int, int]] = None,
+    ):
+        super().__init__(
+            d_model,
+            nhead,
+            dropout,
+            mlp_hidden_dim,
+            activation,
+            kernel_size,
+            tokenized_size,
+        )
+
+        # Transformer for group tokens
+        self.mixer = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model,
+                nhead,
+                dropout=dropout,
+                batch_first=True,
+                activation=(
+                    "gelu"
+                    if isinstance(activation, nn.GELU)
+                    else "relu"
+                    if isinstance(activation, nn.ReLU)
+                    else activation
+                ),
+            ),
+            num_transformer_layers,
+        )
