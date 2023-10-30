@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from gpvit.layers import GroupPropagation, MLPMixer, WindowAttention
+from gpvit.layers import GroupPropagationMLPMixer, GroupPropagationTransformer, MLPMixer, WindowAttention
 
 
 class TestMLPMixer:
@@ -68,20 +68,24 @@ class TestWindowAttention:
         assert output.shape == x.shape
 
 
-class TestGroupPropagation:
+class TestGroupPropagationMLPMixer:
+    @pytest.fixture
+    def layer(self):
+        return GroupPropagationMLPMixer(64, 4, 16, 32, 32)
+
     @pytest.mark.parametrize("device", ["cpu", "cuda"])
-    def test_forward_pass(self, device):
+    def test_forward_pass(self, device, layer):
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
-        gp = GroupPropagation(64, 4, 16, 32, 32).to(device)
+        gp = layer.to(device)
         tokens = torch.randn(1, 16, 64).to(device)
         group_tokens = torch.randn(1, 16, 64).to(device)
         output_tokens, output_group_tokens = gp(tokens, group_tokens)
         assert output_tokens.shape == tokens.shape
         assert output_group_tokens.shape == group_tokens.shape
 
-    def test_nan_propagation(self):
-        gp = GroupPropagation(64, 4, 16, 32, 32)
+    def test_nan_propagation(self, layer):
+        gp = layer
         tokens = torch.randn(2, 16, 64)
         group_tokens = torch.randn(2, 16, 64)
         tokens[0, :, :] = float("nan")
@@ -89,8 +93,8 @@ class TestGroupPropagation:
         assert not torch.isnan(output_tokens[1]).any()
         assert not torch.isnan(output_group_tokens[1]).any()
 
-    def test_backprop(self):
-        gp = GroupPropagation(64, 4, 16, 32, 32)
+    def test_backprop(self, layer):
+        gp = layer
         tokens = torch.randn(1, 16, 64, requires_grad=True)
         group_tokens = torch.randn(1, 16, 64, requires_grad=True)
         output_tokens, output_group_tokens = gp(tokens, group_tokens)
@@ -98,11 +102,17 @@ class TestGroupPropagation:
         assert tokens.grad is not None
         assert group_tokens.grad is not None
 
-    def test_torch_scriptable(self):
-        gp = GroupPropagation(64, 4, 16, 32, 32)
+    def test_torch_scriptable(self, layer):
+        gp = layer
         tokens = torch.randn(1, 16, 64)
         group_tokens = torch.randn(1, 16, 64)
         scripted_gp = torch.jit.script(gp)
         output_tokens, output_group_tokens = scripted_gp(tokens, group_tokens)  # type: ignore
         assert output_tokens.shape == tokens.shape
         assert output_group_tokens.shape == group_tokens.shape
+
+
+class TestGroupPropagationTransformer(TestGroupPropagationMLPMixer):
+    @pytest.fixture
+    def layer(self):
+        return GroupPropagationTransformer(64, 4, 2)

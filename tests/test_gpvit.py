@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 
 from gpvit import GPViT
-from gpvit.layers import GroupPropagation, WindowAttention
+from gpvit.layers import GroupPropagationMLPMixer, GroupPropagationTransformer, WindowAttention
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
@@ -98,4 +98,27 @@ def test_gp_only():
     for child in model.children():
         assert not isinstance(child, WindowAttention)
     for block in model.blocks:
-        assert isinstance(block, GroupPropagation)
+        assert isinstance(block, GroupPropagationMLPMixer)
+
+
+def test_transformer():
+    model = GPViT(
+        dim=128,
+        num_group_tokens=16,
+        depth=12,
+        img_size=(64, 64),
+        patch_size=(8, 8),
+        window_size=(4, 4),
+        group_interval=1,
+        group_token_mixer="transformer",
+        mixer_repeats=2,
+    )
+    for child in model.children():
+        assert not isinstance(child, WindowAttention)
+    for block in model.blocks:
+        assert isinstance(block, GroupPropagationTransformer)
+
+    x = torch.randn(1, 3, 64, 64)
+    output, group_output = model(x)
+    assert output.shape == (1, 128, 8, 8)
+    assert group_output.shape == (1, 16, 128)
