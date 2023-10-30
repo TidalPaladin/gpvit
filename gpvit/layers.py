@@ -219,6 +219,10 @@ class GroupPropagationMLPMixer(GroupPropagation):
             meaning no convolutional layer is used.
         tokenized_size: The size of the tokenized image. Only required when using a
             convolutional layer.
+        group_tokens_as_kv: Whether to use the group tokens as the key and value in the
+            first cross attention layer. Setting this to ``True`` allows the group tokens
+            to attend to both the tokens and the group tokens. Otherwise the group tokens
+            attend only to the tokens. Defaults to False.
 
     Returns:
         Tuple[Tensor, Tensor]: The tokens and group tokens after propagation.
@@ -236,6 +240,7 @@ class GroupPropagationMLPMixer(GroupPropagation):
         activation: nn.Module = nn.GELU(),
         kernel_size: Optional[Tuple[int, int]] = None,
         tokenized_size: Optional[Tuple[int, int]] = None,
+        group_tokens_as_kv: bool = False,
     ):
         super().__init__(
             d_model,
@@ -245,6 +250,7 @@ class GroupPropagationMLPMixer(GroupPropagation):
             activation,
             kernel_size,
             tokenized_size,
+            group_tokens_as_kv,
         )
 
         # MLPMixer for group tokens
@@ -267,6 +273,10 @@ class GroupPropagationTransformer(GroupPropagation):
             meaning no convolutional layer is used.
         tokenized_size: The size of the tokenized image. Only required when using a
             convolutional layer.
+        group_tokens_as_kv: Whether to use the group tokens as the key and value in the
+            first cross attention layer. Setting this to ``True`` allows the group tokens
+            to attend to both the tokens and the group tokens. Otherwise the group tokens
+            attend only to the tokens. Defaults to False.
 
     Returns:
         Tuple[Tensor, Tensor]: The tokens and group tokens after propagation.
@@ -282,6 +292,7 @@ class GroupPropagationTransformer(GroupPropagation):
         activation: nn.Module = nn.GELU(),
         kernel_size: Optional[Tuple[int, int]] = None,
         tokenized_size: Optional[Tuple[int, int]] = None,
+        group_tokens_as_kv: bool = False,
     ):
         super().__init__(
             d_model,
@@ -291,6 +302,7 @@ class GroupPropagationTransformer(GroupPropagation):
             activation,
             kernel_size,
             tokenized_size,
+            group_tokens_as_kv,
         )
 
         # Transformer for group tokens
