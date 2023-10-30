@@ -35,6 +35,10 @@ class GPViT(nn.Module):
             "mlpmixer", "transformer". Defaults to "mlpmixer".
         mixer_repeats: The number of times to repeat the mixer. Only used if
             ``group_token_mixer`` is "transformer". Defaults to 1.
+        group_tokens_as_kv: Whether to use the group tokens as the key and value in the
+            first cross attention layer of each block. Setting this to ``True`` allows the
+            group tokens to attend to both the tokens and the group tokens.
+            Otherwise the group tokens attend only to the tokens. Defaults to False.
 
     Shapes:
         * Input - :math:`(B, C, H, W)`
@@ -66,6 +70,7 @@ class GPViT(nn.Module):
         reshape_output: bool = True,
         group_token_mixer: str = "mlpmixer",
         mixer_repeats: int = 1,
+        group_tokens_as_kv: bool = False,
     ):
         super().__init__()
         self._dim = dim
@@ -114,8 +119,9 @@ class GPViT(nn.Module):
                         activation=activation,
                         kernel_size=self.kernel_size,
                         tokenized_size=self.tokenized_size,
+                        group_tokens_as_kv=group_tokens_as_kv,
                     )
-                else:
+                elif group_token_mixer == "transformer":
                     block = GroupPropagationTransformer(
                         dim,
                         self.nhead,
@@ -124,7 +130,10 @@ class GPViT(nn.Module):
                         activation=activation,
                         kernel_size=self.kernel_size,
                         tokenized_size=self.tokenized_size,
+                        group_tokens_as_kv=group_tokens_as_kv,
                     )
+                else:
+                    raise ValueError(f"Unknown group token mixer {group_token_mixer}")
 
             else:
                 # Ensure we use an activation form that will be accelerated by TransformerEncoderLayer
