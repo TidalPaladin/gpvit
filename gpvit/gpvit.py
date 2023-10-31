@@ -33,8 +33,7 @@ class GPViT(nn.Module):
         reshape_output: Whether to reshape the output to a grid. Defaults to True.
         group_token_mixer: Choice of mixer for the group tokens. Can be one of
             "mlpmixer", "transformer". Defaults to "mlpmixer".
-        mixer_repeats: The number of times to repeat the mixer. Only used if
-            ``group_token_mixer`` is "transformer". Defaults to 1.
+        mixer_repeats: The number of times to repeat the mixer in each GP block.
         group_tokens_as_kv: Whether to use the group tokens as the key and value in the
             first cross attention layer of each block. Setting this to ``True`` allows the
             group tokens to attend to both the tokens and the group tokens.
@@ -106,16 +105,13 @@ class GPViT(nn.Module):
         for i in range(depth):
             is_group_propagation = i % group_interval == group_interval - 1
             if is_group_propagation:
-                token_hidden_dim = num_group_tokens * 4
-                channel_hidden_dim = dim * 4
                 if group_token_mixer == "mlpmixer":
                     block = GroupPropagationMLPMixer(
                         dim,
                         self.nhead,
                         num_group_tokens,
-                        token_hidden_dim,
-                        channel_hidden_dim,
-                        dropout,
+                        mixer_repeats=mixer_repeats,
+                        dropout=dropout,
                         activation=activation,
                         kernel_size=self.kernel_size,
                         tokenized_size=self.tokenized_size,
