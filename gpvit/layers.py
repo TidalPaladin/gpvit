@@ -210,8 +210,9 @@ class GroupPropagationMLPMixer(GroupPropagation):
         d_model: The dimension of the model.
         nhead: The number of heads in the multihead attention models.
         num_tokens: The number of tokens.
-        token_dim: The dimension of the tokens.
-        channel_dim: The dimension of the channels.
+        token_dim: Dimension of the token mixing MLP. Defaults to ``0.5 * d_model``.
+        channel_dim: Dimension of the channel mixing MLP. Defaults to ``4 * d_model``.
+        mixer_repeats: The number of times to repeat the mixer.
         dropout: The dropout value.
         mlp_hidden_dim: Hidden dimension of the MLPs. Defaults to ``4 * d_model``.
         activation: The activation function to use.
@@ -233,8 +234,9 @@ class GroupPropagationMLPMixer(GroupPropagation):
         d_model: int,
         nhead: int,
         num_tokens: int,
-        token_dim: int,
-        channel_dim: int,
+        token_dim: Optional[int] = None,
+        channel_dim: Optional[int] = None,
+        mixer_repeats: int = 1,
         dropout: float = 0.0,
         mlp_hidden_dim: Optional[int] = None,
         activation: nn.Module = nn.GELU(),
@@ -252,9 +254,16 @@ class GroupPropagationMLPMixer(GroupPropagation):
             tokenized_size,
             group_tokens_as_kv,
         )
+        token_dim = d_model // 2 if token_dim is None else token_dim
+        channel_dim = d_model * 4 if channel_dim is None else channel_dim
 
         # MLPMixer for group tokens
-        self.mixer = MLPMixer(d_model, token_dim, num_tokens, channel_dim, dropout=dropout, activation=activation)
+        self.mixer = nn.Sequential(
+            *[
+                MLPMixer(d_model, token_dim, num_tokens, channel_dim, dropout=dropout, activation=activation)
+                for _ in range(mixer_repeats)
+            ]
+        )
 
 
 class GroupPropagationTransformer(GroupPropagation):
@@ -265,7 +274,7 @@ class GroupPropagationTransformer(GroupPropagation):
     Args:
         d_model: The dimension of the model.
         nhead: The number of heads in the multihead attention models.
-        num_transformer_layers: The number of transformer layers to use in group token mixing.
+        mixer_repeats: Number of times to repeat the mixer.
         dropout: The dropout value.
         mlp_hidden_dim: Hidden dimension of the MLPs. Defaults to ``4 * d_model``.
         activation: The activation function to use.
@@ -286,7 +295,7 @@ class GroupPropagationTransformer(GroupPropagation):
         self,
         d_model: int,
         nhead: int,
-        num_transformer_layers: int = 1,
+        mixer_repeats: int = 1,
         dropout: float = 0.0,
         mlp_hidden_dim: Optional[int] = None,
         activation: nn.Module = nn.GELU(),
@@ -320,5 +329,5 @@ class GroupPropagationTransformer(GroupPropagation):
                     else activation
                 ),
             ),
-            num_transformer_layers,
+            mixer_repeats,
         )
