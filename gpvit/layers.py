@@ -31,12 +31,10 @@ class MLPMixer(nn.Module):
     ):
         super().__init__()
         self.token_mixing = nn.Sequential(
-            Rearrange("b l d -> b d l", d=dim, l=num_patches),
-            nn.Linear(num_patches, token_dim),
+            nn.Conv1d(num_patches, token_dim, 1),
             copy(activation),
             nn.Dropout(dropout),
-            nn.Linear(token_dim, num_patches),
-            Rearrange("b d l -> b l d", d=dim, l=num_patches),
+            nn.Conv1d(token_dim, num_patches, 1),
         )
         self.channel_mixing = nn.Sequential(
             nn.Linear(dim, channel_dim),
@@ -210,7 +208,7 @@ class GroupPropagationMLPMixer(GroupPropagation):
         d_model: The dimension of the model.
         nhead: The number of heads in the multihead attention models.
         num_tokens: The number of tokens.
-        token_dim: Dimension of the token mixing MLP. Defaults to ``0.5 * d_model``.
+        token_dim: Dimension of the token mixing MLP. Defaults to ``4 * num_tokens``.
         channel_dim: Dimension of the channel mixing MLP. Defaults to ``4 * d_model``.
         mixer_repeats: The number of times to repeat the mixer.
         dropout: The dropout value.
@@ -254,7 +252,7 @@ class GroupPropagationMLPMixer(GroupPropagation):
             tokenized_size,
             group_tokens_as_kv,
         )
-        token_dim = d_model // 2 if token_dim is None else token_dim
+        token_dim = num_tokens * 4 if token_dim is None else token_dim
         channel_dim = d_model * 4 if channel_dim is None else channel_dim
 
         # MLPMixer for group tokens
