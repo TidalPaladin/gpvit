@@ -80,9 +80,10 @@ class GPViT(nn.Module):
         self._in_channels = in_channels
         self._conv = conv
         self._reshape_output = reshape_output
+        self._num_group_tokens = num_group_tokens
 
         # Initialize group tokens
-        self.group_tokens = nn.Parameter(torch.randn(1, num_group_tokens, dim))
+        self.group_tokens = nn.Parameter(torch.randn(1, self.num_group_tokens, dim))
 
         # Patch embedding
         H, W = self.tokenized_size
@@ -109,7 +110,7 @@ class GPViT(nn.Module):
                     block = GroupPropagationMLPMixer(
                         dim,
                         self.nhead,
-                        num_group_tokens,
+                        self.num_group_tokens,
                         mixer_repeats=mixer_repeats,
                         dropout=dropout,
                         activation=activation,
@@ -186,6 +187,10 @@ class GPViT(nn.Module):
     @property
     def window_size(self) -> Tuple[int, int]:
         return self._window_size
+
+    @property
+    def num_group_tokens(self) -> int:
+        return self._num_group_tokens
 
     @property
     def in_channels(self) -> int:
