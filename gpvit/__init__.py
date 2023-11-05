@@ -3,7 +3,15 @@
 import importlib.metadata
 
 from .gpvit import GPViT
+from .layers import GroupPropagationMLPMixer, GroupPropagationTransformer, MLPMixer, MLPMixerPooling, WindowAttention
 
 
 __version__ = importlib.metadata.version("gpvit")
-__all__ = ["GPViT"]
+__all__ = [
+    "GPViT",
+    "GroupPropagationMLPMixer",
+    "GroupPropagationTransformer",
+    "WindowAttention",
+    "MLPMixer",
+    "MLPMixerPooling",
+]
