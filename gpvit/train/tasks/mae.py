@@ -7,7 +7,7 @@ from ssl_tasks.mae.task import MAE as MAEBase
 from ssl_tasks.tokens import TokenMask
 from torch import Tensor
 
-from ..import BACKBONES
+from .. import BACKBONES
 from .helpers import mask_fn
 
 
@@ -19,14 +19,14 @@ class MAE(MAEBase):
         mask_ratio: Ratio of tokens to mask. Defaults to 0.4.
         mask_scale: Scale of the mask. Increasing this will mask tokens in larger groups. Defaults to 2.
         optimizer_init: Initial configuration for the optimizer.
-        lr_scheduler_init: Initial configuration for the learning rate scheduler. 
+        lr_scheduler_init: Initial configuration for the learning rate scheduler.
         lr_interval: Interval for learning rate update. Defaults to "epoch".
         lr_monitor: Metric to monitor for learning rate scheduler. Defaults to "train/total_loss_epoch".
-        checkpoint: Path to the checkpoint file. 
-        strict_checkpoint: If True, loading checkpoint is strict. 
-        log_train_metrics_interval: Interval for logging training metrics. 
-        log_train_metrics_on_epoch: If True, logs training metrics on epoch end. 
-        weight_decay_exemptions: Set of exemptions for weight decay. 
+        checkpoint: Path to the checkpoint file.
+        strict_checkpoint: If True, loading checkpoint is strict.
+        log_train_metrics_interval: Interval for logging training metrics.
+        log_train_metrics_on_epoch: If True, logs training metrics on epoch end.
+        weight_decay_exemptions: Set of exemptions for weight decay.
 
     """
 
