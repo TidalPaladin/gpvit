@@ -394,10 +394,10 @@ files = [
 
 [[package]]
 name = "deep-helpers"
-version = "0.1.dev39+g0ec17b7"
+version = "0.1.dev40+g6de4dfb"
 requires_python = ">=3.8"
 git = "https://github.com/TidalPaladin/deep-helpers.git"
-revision = "0ec17b7bd53f6b20df6ceeb5f0730104f1dc5ed4"
+revision = "6de4dfbb314ef485b8ea9fa54399541d8fa6ffa4"
 summary = ""
 dependencies = [
     "jsonargparse[signatures]>=4.17.0",
