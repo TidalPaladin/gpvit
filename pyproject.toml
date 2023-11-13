@@ -58,6 +58,14 @@ quality = [
   "flake8",
   "isort",
 ]
+train = [
+    "deep-helpers @ git+https://github.com/TidalPaladin/deep-helpers.git",
+    "ssl-tasks @ git+https://github.com/TidalPaladin/ssl-tasks.git",
+    "wandb>=0.15.4",
+    "pytorch-lightning>=2.1.0",
+    "torchmetrics>=1.2.0",
+    "callable-registry @ git+https://github.com/TidalPaladin/callable-registry.git",
+]
 
 [tool.pytest.ini_options]
 markers = [
