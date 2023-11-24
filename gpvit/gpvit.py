@@ -6,7 +6,7 @@ from einops.layers.torch import Rearrange
 from torch import Tensor, nn
 from torch.utils.hooks import RemovableHandle
 
-from .layers import GroupPropagationMLPMixer, GroupPropagationTransformer, WindowAttention
+from .layers import GroupPropagationMLPMixer, GroupPropagationTransformer, WindowAttention, WindowMLPMixer
 from .pos_enc import FourierLogspace
 
 
@@ -33,6 +33,7 @@ class GPViT(nn.Module):
         reshape_output: Whether to reshape the output to a grid. Defaults to True.
         group_token_mixer: Choice of mixer for the group tokens. Can be one of
             "mlpmixer", "transformer". Defaults to "mlpmixer".
+        token_mixer: Choice of mixer for the tokens. Can be one of "mlpmixer", "transformer".
         mixer_repeats: The number of times to repeat the mixer in each GP block.
         group_tokens_as_kv: Whether to use the group tokens as the key and value in the
             first cross attention layer of each block. Setting this to ``True`` allows the
@@ -68,6 +69,7 @@ class GPViT(nn.Module):
         pos_enc: str = "learned",
         reshape_output: bool = True,
         group_token_mixer: str = "mlpmixer",
+        token_mixer: str = "transformer",
         mixer_repeats: int = 1,
         group_tokens_as_kv: bool = False,
     ):
@@ -130,19 +132,33 @@ class GPViT(nn.Module):
                         group_tokens_as_kv=group_tokens_as_kv,
                     )
                 else:
-                    raise ValueError(f"Unknown group token mixer {group_token_mixer}")
+                    raise ValueError(f"Unknown group token mixer {group_token_mixer}")  # pragma: no cover
 
             else:
                 # Ensure we use an activation form that will be accelerated by TransformerEncoderLayer
-                act = "gelu" if activation == nn.GELU() else "relu" if activation == nn.ReLU() else activation
-                block = WindowAttention(
-                    dim,
-                    self.nhead,
-                    window_size=self.window_size,
-                    grid_size=self.tokenized_size,
-                    dropout=dropout,
-                    activation=act,
-                )
+                if token_mixer == "transformer":
+                    act = "gelu" if activation == nn.GELU() else "relu" if activation == nn.ReLU() else activation
+                    block = WindowAttention(
+                        dim,
+                        self.nhead,
+                        window_size=self.window_size,
+                        grid_size=self.tokenized_size,
+                        dropout=dropout,
+                        activation=act,
+                    )
+                elif token_mixer == "mlpmixer":
+                    block = WindowMLPMixer(
+                        dim,
+                        None,
+                        None,
+                        window_size=self.window_size,
+                        grid_size=self.tokenized_size,
+                        dropout=dropout,
+                        activation=activation,
+                    )
+                else:
+                    raise ValueError(f"Unknown token mixer {token_mixer}")  # pragma: no cover
+
             self.blocks.append(block)
 
         self.tokens_to_grid = Rearrange("b (h w) d -> b d h w", h=H, w=W)
@@ -162,10 +178,7 @@ class GPViT(nn.Module):
         # Body
         group_tokens = self.group_tokens.expand(B, -1, -1)
         for block in self.blocks:
-            if isinstance(block, WindowAttention):
-                x = block(x)
-            else:
-                x, group_tokens = block(x, group_tokens)
+            x, group_tokens = block.group_forward(x, group_tokens)
 
         # Unpatch and return
         if self.reshape_output:

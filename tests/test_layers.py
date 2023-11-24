@@ -7,6 +7,7 @@ from gpvit.layers import (
     MLPMixer,
     MLPMixerPooling,
     WindowAttention,
+    WindowMLPMixer,
 )
 
 
@@ -42,34 +43,40 @@ class TestMLPMixer:
         assert output.shape == x.shape
 
 
-class TestWindowAttention:
+class TestWindowMixer:
+    @pytest.fixture(params=[WindowMLPMixer, WindowAttention])
+    def layer(self, request):
+        if request.param == WindowAttention:
+            return WindowAttention(64, 4, grid_size=(16, 16), window_size=(4, 4))
+        elif request.param == WindowMLPMixer:
+            return WindowMLPMixer(64, 16, 64, grid_size=(16, 16), window_size=(4, 4))
+        else:
+            raise ValueError(f"Unknown layer {request.param}")
+
     @pytest.mark.parametrize("device", ["cpu", "cuda"])
-    def test_forward_pass(self, device):
+    def test_forward_pass(self, device, layer):
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
-        attn = WindowAttention(64, 4, grid_size=(16, 16), window_size=(4, 4)).to(device)
+        layer = layer.to(device)
         x = torch.randn(1, 256, 64).to(device)
-        output = attn(x)
+        output = layer(x)
         assert output.shape == x.shape
 
-    def test_nan_propagation(self):
-        attn = WindowAttention(64, 4, grid_size=(16, 16), window_size=(4, 4))
+    def test_nan_propagation(self, layer):
         x = torch.randn(2, 256, 64)
         x[0, :, :] = float("nan")
-        output = attn(x)
+        output = layer(x)
         assert not torch.isnan(output[1]).any()
 
-    def test_backprop(self):
-        attn = WindowAttention(64, 4, grid_size=(16, 16), window_size=(4, 4))
+    def test_backprop(self, layer):
         x = torch.randn(1, 256, 64, requires_grad=True)
-        output = attn(x)
+        output = layer(x)
         output.sum().backward()
         assert x.grad is not None
 
-    def test_torch_scriptable(self):
-        attn = WindowAttention(64, 4, grid_size=(16, 16), window_size=(4, 4))
+    def test_torch_scriptable(self, layer):
         x = torch.randn(1, 256, 64)
-        scripted_attn = torch.jit.script(attn)
+        scripted_attn = torch.jit.script(layer)
         output = scripted_attn(x)  # type: ignore
         assert output.shape == x.shape
 
