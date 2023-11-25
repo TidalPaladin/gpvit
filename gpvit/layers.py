@@ -51,9 +51,9 @@ class MLPMixer(nn.Module):
         return x
 
 
-class WindowAttention(nn.Module):
+class WindowMixer(nn.Module, ABC):
     """
-    Window Attention class for applying window-based attention to an input tensor.
+    Window class for applying window-based mixing to an input tensor.
 
     Args:
         grid_size: The size of the grid to be considered for window attention.
@@ -65,38 +65,131 @@ class WindowAttention(nn.Module):
 
     def __init__(
         self,
-        *args,
+        grid_size: Tuple[int, int],
+        window_size: Tuple[int, int],
+    ):
+        super().__init__()
+        self._grid_size = grid_size
+        self._window_size = window_size
+
+        Hw, Ww = window_size
+        Hi, Wi = grid_size
+        if not Hi % Hw == 0:
+            raise ValueError(f"Window height {Hw} does not divide grid height {Hi}")  # pragma: no cover
+        if not Wi % Ww == 0:
+            raise ValueError(f"Window width {Ww} does not divide grid width {Wi}")  # pragma: no cover
+
+        H, W = self.size_after_windowing
+        self.window = Rearrange("n (h hw w ww) c -> (n h w) (hw ww) c", hw=Hw, ww=Ww, h=H, w=W)
+        self.unwindow = Rearrange("(n h w) (hw ww) c -> n (h hw w ww) c", hw=Hw, ww=Ww, h=H, w=W)
+
+    @property
+    def grid_size(self) -> Tuple[int, int]:
+        """The size of the total grid to be considered for window attention."""
+        return self._grid_size
+
+    @property
+    def window_size(self) -> Tuple[int, int]:
+        """The size of the window to be considered for window attention."""
+        return self._window_size
+
+    @property
+    def size_after_windowing(self) -> Tuple[int, int]:
+        """The size of the grid once windowed"""
+        Hg, Wg = self.grid_size
+        Hw, Ww = self.window_size
+        return (Hg // Hw), (Wg // Ww)
+
+    @property
+    def num_windows(self) -> int:
+        """The number of windows in the grid."""
+        H, W = self.size_after_windowing
+        return H * W
+
+    @property
+    def tokens_per_window(self) -> int:
+        """The number of tokens in a window."""
+        H, W = self.window_size
+        return H * W
+
+    def forward(self, x: Tensor) -> Tensor:
+        x = self.window(x)
+        x = self.mixer(x)
+        x = self.unwindow(x)
+        return x
+
+    def group_forward(self, tokens: Tensor, group_tokens: Tensor) -> Tuple[Tensor, Tensor]:
+        return self(tokens), group_tokens
+
+
+class WindowAttention(WindowMixer):
+    """
+    Window mixing class for applying window-based attention to an input tensor.
+
+    Args:
+        dim: The dimension of the input tensor.
+        nhead: The number of heads in the multihead attention models.
+        grid_size: The size of the grid to be considered for window attention.
+        window_size: The size of the window to be considered for window attention.
+
+    Keyword Args:
+        Forwarded to :class:`nn.TransformerEncoderLayer`.
+
+    Raises:
+        ValueError: If the window size does not divide the grid size.
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        nhead: int,
         grid_size: Tuple[int, int],
         window_size: Tuple[int, int],
         **kwargs,
     ):
         # TODO: It is cleaner to inherit from TransformerEncoderLayer but calling super().forward()
         # is not supported in torchscript. See https://github.com/pytorch/pytorch/issues/42885
-        super().__init__()
+        super().__init__(grid_size, window_size)
         kwargs.setdefault("batch_first", "True")
-        self.transformer_layer = nn.TransformerEncoderLayer(*args, **kwargs)
-
-        Hw, Ww = window_size
-        Hi, Wi = grid_size
-
-        if not Hi % Hw == 0:
-            raise ValueError(f"Window height {Hw} does not divide grid height {Hi}")  # pragma: no cover
-        if not Wi % Ww == 0:
-            raise ValueError(f"Window width {Ww} does not divide grid width {Wi}")  # pragma: no cover
-
-        H, W = Hi // Hw, Wi // Ww
-        self.grid_size = grid_size
-        self.window = Rearrange("n (h hw w ww) c -> (n h w) (hw ww) c", hw=Hw, ww=Ww, h=H, w=W)
-        self.unwindow = Rearrange("(n h w) (hw ww) c -> n (h hw w ww) c", hw=Hw, ww=Ww, h=H, w=W)
-
-    def forward(self, x: Tensor) -> Tensor:
-        x = self.window(x)
-        x = self.transformer_layer(x)
-        x = self.unwindow(x)
-        return x
+        self.mixer = nn.TransformerEncoderLayer(dim, nhead, **kwargs)
 
 
-class GroupPropagation(nn.Module, ABC):
+class WindowMLPMixer(WindowMixer):
+    """
+    Window mixing class for applying window-based MLP-mixing to an input tensor.
+
+    Args:
+        dim: The dimension of the input tensor.
+        token_dim: The hidden dimension of the token-mixing MLP. If ``None``, defaults to
+            ``4 * num_tokens``.
+        channel_dim: The hidden dimension of the channel-mixing MLP. If ``None``, defaults to
+            ``4 * dim``.
+        grid_size: The size of the grid to be considered for window attention.
+        window_size: The size of the window to be considered for window attention.
+
+    Keyword Args:
+        Forwarded to :class:`MLPMixer`.
+
+    Raises:
+        ValueError: If the window size does not divide the grid size.
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        token_dim: Optional[int],
+        channel_dim: Optional[int],
+        grid_size: Tuple[int, int],
+        window_size: Tuple[int, int],
+        **kwargs,
+    ):
+        super().__init__(grid_size, window_size)
+        token_dim = token_dim or 4 * self.tokens_per_window
+        channel_dim = channel_dim or 4 * dim
+        self.mixer = MLPMixer(dim, token_dim, self.tokens_per_window, channel_dim, **kwargs)
+
+
+class GroupPropagation(nn.Module):
     """
     Group Propagation class for applying group propagation to an input tensor.
     Subclass to implement group token mixing.
@@ -197,6 +290,9 @@ class GroupPropagation(nn.Module, ABC):
         tokens = self.norm3(tokens + self.mlp(_tokens))
 
         return tokens, group_tokens
+
+    def group_forward(self, tokens: Tensor, group_tokens: Tensor) -> Tuple[Tensor, Tensor]:
+        return self(tokens, group_tokens)
 
 
 class GroupPropagationMLPMixer(GroupPropagation):
