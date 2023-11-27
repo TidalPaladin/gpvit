@@ -46,8 +46,8 @@ class MLPMixer(nn.Module):
         self.norm2 = nn.LayerNorm(dim)
 
     def forward(self, x: Tensor) -> Tensor:
-        x = self.norm1(x + self.token_mixing(x))
-        x = self.norm2(x + self.channel_mixing(x))
+        x = x + self.token_mixing(self.norm1(x))
+        x = x + self.channel_mixing(self.norm2(x))
         return x
 
 
@@ -232,13 +232,15 @@ class GroupPropagation(nn.Module):
         self.attn1 = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
         self.q1 = nn.Linear(d_model, d_model)
         self.kv1 = nn.Linear(d_model, 2 * d_model)
-        self.norm1 = nn.LayerNorm(d_model)
+        self.norm1_q = nn.LayerNorm(d_model)
+        self.norm1_kv = nn.LayerNorm(d_model)
 
         # Cross attention 2
         self.attn2 = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
         self.q2 = nn.Linear(d_model, d_model)
         self.kv2 = nn.Linear(d_model, 2 * d_model)
-        self.norm2 = nn.LayerNorm(d_model)
+        self.norm2_q = nn.LayerNorm(d_model)
+        self.norm2_kv = nn.LayerNorm(d_model)
 
         # Possible DW conv for tokens
         if kernel_size is not None:
@@ -266,20 +268,20 @@ class GroupPropagation(nn.Module):
 
     def forward(self, tokens: Tensor, group_tokens: Tensor) -> Tuple[Tensor, Tensor]:
         # Cross attention - group tokens to tokens
-        q = self.q1(group_tokens)
+        q = self.q1(self.norm1_q(group_tokens))
         _tokens = torch.cat([tokens, group_tokens], dim=1) if self.group_tokens_as_kv else tokens
-        k, v = self.kv1(_tokens).chunk(2, dim=-1)
+        k, v = self.kv1(self.norm1_kv(_tokens)).chunk(2, dim=-1)
         _group_tokens, _ = self.attn1(q, k, v)
-        group_tokens = self.norm1(group_tokens + _group_tokens)
+        group_tokens = group_tokens + _group_tokens
 
         # Group token mixing
         group_tokens = self.mixer(group_tokens)
 
         # Cross attention - tokens to group tokens
-        q = self.q2(tokens)
-        k, v = self.kv2(group_tokens).chunk(2, dim=-1)
+        q = self.q2(self.norm2_q(tokens))
+        k, v = self.kv2(self.norm2_kv(group_tokens)).chunk(2, dim=-1)
         _tokens, _ = self.attn2(q, k, v)
-        tokens = self.norm2(tokens + _tokens)
+        tokens = tokens + _tokens
 
         # Maybe DW conv
         _tokens = tokens
@@ -287,7 +289,7 @@ class GroupPropagation(nn.Module):
             _tokens = self.conv(_tokens)
 
         # MLP
-        tokens = self.norm3(tokens + self.mlp(_tokens))
+        tokens = tokens + self.mlp(self.norm3(_tokens))
 
         return tokens, group_tokens
 
@@ -422,6 +424,7 @@ class GroupPropagationTransformer(GroupPropagation):
                     if isinstance(activation, nn.ReLU)
                     else activation
                 ),
+                norm_first=True,
             ),
             mixer_repeats,
         )
@@ -460,6 +463,6 @@ class MLPMixerPooling(MLPMixer):
         )
 
     def forward(self, x: Tensor) -> Tensor:
-        x = self.norm1(self.token_mixing(x))
-        x = self.norm2(x + self.channel_mixing(x))
+        x = self.token_mixing(self.norm1(x))
+        x = x + self.channel_mixing(self.norm2(x))
         return x

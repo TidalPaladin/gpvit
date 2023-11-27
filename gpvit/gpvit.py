@@ -173,7 +173,7 @@ class GPViT(nn.Module):
             pos = self.position
         else:
             pos = self.position.from_grid(list(self.tokenized_size), proto=x, batch_size=B)
-        x = self.stem_norm(x + pos)
+        x = x + self.stem_norm(pos)
 
         # Body
         group_tokens = self.group_tokens.expand(B, -1, -1)
